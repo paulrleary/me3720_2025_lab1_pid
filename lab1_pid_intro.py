@@ -57,7 +57,7 @@ def get_states_6dof(dynamics_sensor_output_rpy):
 plt.ion()
 x_data = []
 y_data = []
-''
+
 fig, ax = plt.subplots()
 line, = ax.plot(x_data, y_data)
 
@@ -73,8 +73,8 @@ acceleration_global = np.zeros(6)
 thruster_command = np.zeros(8)
 
 # Comment these out to leave thruster command initialized to zero.
-thruster_command[0:4] = 0.1
-thruster_command[[4,7]] += 0.4
+# thruster_command[0:4] = 0.1
+# thruster_command[[4,7]] += 0.4
 
 # Make environment
 def rotate_6dof_forces(forces, eulers):
@@ -102,12 +102,12 @@ with holoocean.make(scenario_cfg=scenario) as env:
 
         # INSERT HERE: Implementing PID, control for depth, heading and speed (in that order), where the goal is to drive the vehicle in a constant circle at depth.
 
-        th = st[3:6]
+        theta = st[3:6]
 
         thrust_forces_body = thrusters_to_body_forces(thruster_command)
         print(thrust_forces_body)
 
-        thrust_forces_global = rotate_6dof_forces(thrust_forces_body, th)
+        thrust_forces_global = rotate_6dof_forces(thrust_forces_body, theta)
         
         net_force_global = hydro_forces_global + thrust_forces_global
 
