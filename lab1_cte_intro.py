@@ -6,12 +6,12 @@ np.set_printoptions(suppress=True) # Suppress scientific notation in printing
 import matplotlib.pyplot as plt
 import time
 
-# from simple_pid import PID
+from simple_pid import PID
 
 from HoveringAUV_Physical_Model import global_hydro_forces, thrusters_to_body_forces, forces_to_accelerations
 from Frenet_Serret_Error import frenet_seret_cross_track_error as cte
-from PID_controllers import depth_pid_controller, heading_pid_controller, speed_pid_controller, lookahead_distance
-from helper_functions import vert_force_to_thrusters, yaw_force_to_thrusters, speed_force_to_thrusters, control_angle_delta_degrees
+from PID_controllers import depth_pid, yaw_pid, lookahead_distance
+from helper_functions import vert_force_to_thrusters, yaw_force_to_thrusters, control_angle_delta_degrees
 scenario = {
     "name": "hovering_dynamics",
     "package_name": "Ocean",
@@ -30,7 +30,7 @@ scenario = {
                 },
             ],
             "control_scheme": 2, # this is the custom dynamics control scheme
-            "location": [380,-775,-10],
+            "location": [-20,-30,-10],
             # "rotation": [20,20,90]
             "rotation": [0,0,90]
         }
@@ -94,40 +94,24 @@ def rotate_6dof_forces(forces, eulers):
 
     return rotated_forces
 
-from Tracks import hourglass_small as track_list
+track = [np.array([-40, -40, -10]), 
+         np.array([100, 100, -10])]
 
-def distance(p1, p2):
-    return np.linalg.norm(np.array(p1) - np.array(p2))
 
 # Make environment
 with holoocean.make(scenario_cfg=scenario) as env:
     goal_idx = 1
-    
-
-    for wp in track_list:
-        track_x_data.append(wp[0])
-        track_y_data.append(wp[1])
-    
+    current_path = [track[goal_idx-1],
+                         track[goal_idx]]
+    track_x_data = [current_path[0][0], current_path[1][0]]
+    track_y_data = [current_path[0][1], current_path[1][1]]
     track_line.set_xdata(track_x_data)
     track_line.set_ydata(track_y_data)
-
+    # ax.relim()
+    # ax.autoscale_view()
+    
    
     while True:
-
-        
-        current_path = [track_list[goal_idx-1],
-                         track_list[goal_idx]]
-                   # current_path = [track[goal_idx-1],
-                #                 track[goal_idx]]
-                # print(f"New goal: {current_path[0]}, {current_path[1]}")
-
-        # track_x_data = [current_path[0][0], current_path[1][0]]
-        # track_y_data = [current_path[0][1], current_path[1][1]]
-        # track_x_data.append(current_path[1][0])
-        # track_y_data.append(current_path[1][1])
-
-        # track_line.set_xdata(track_x_data)
-        # track_line.set_ydata(track_y_data)
         
         # Step simulation
         simul_state = env.step(acceleration_global)
@@ -138,43 +122,36 @@ with holoocean.make(scenario_cfg=scenario) as env:
         # print(hydro_forces_global)
         auv_state = get_states_6dof(simul_state["DynamicsSensor"])
         
-        pose = auv_state["pose"]
-        vel = auv_state["velocity"]
-                
-        normal_error, binormal_error, frenet_serret_frame = cte(pose[:3], current_path[0], current_path[1])
-        D = distance(pose[:2], current_path[1][:2]) # distance to the next waypoint, horizontal only
+        st = auv_state["pose"]
 
-        # INSERT HERE: using your PID controllers, deriving errors from the Frenet-Serret frame above, control the vehcle to follow the track in 3 dimensions.
-        # You will need to involve logic to decide when to switch to the next waypoint.  We will say for our purposes that the maximum "watch circle" for each waypoint is 5m.
-        # You may need to control speed based on distance to the next waypoint.
-        depth_error = 0
-        depth_control = 0
-        heading_error = 0           # current_path = [track[goal_idx-1],
-                #                 track[goal_idx]]
-                # print(f"New goal: {current_path[0]}, {current_path[1]}")
+        # INSERT HERE: Implementing PID, control for depth, heading and speed (in that order), where the goal is to drive the vehicle in a constant circle at depth.
+        
+        normal_error, binormal_error, frenet_serret_frame = cte(st[:3], current_path[0], current_path[1])
 
-        # track_x_data = [current_path[0][0], current_path[1][0]]
-        # track_y_data = [current_path[0][1], current_path[1][1]]
-        # track_x_data.append(current_path[1][0])
-        # track_y_data.append(current_path[1][1])
+        depth_error = binormal_error
+        depth_control = depth_pid(depth_error)
 
-        # track_line.set_xdata(track_x_data)
-        # track_line.set_ydata(track_y_data)
-        heading_control = 0
-        speed_command = 0
+        cross_track_error = normal_error
+        heading_setpoint = np.arctan2(lookahead_distance, cross_track_error) * 180 / np.pi
+        yaw = st[5]
+        heading_error = control_angle_delta_degrees(yaw, heading_setpoint)
+        heading_error_sin = np.sin(np.deg2rad(heading_error))
+        heading_control = yaw_pid(heading_error)
 
+        # print(f"heading_setpoint: {heading_setpoint:.3f}, yaw: {yaw:.3f}, heading_error: {heading_error:.3f}, heading_control: {heading_control:.3f}")
+        
         print(f"Normal Error: {normal_error:.3f}, Heading Error: {heading_error:.3f}, Heading Control: {heading_control:.3f}, Binormal Error: {binormal_error:.3f}, Depth Error: {depth_error:.3f},  Depth Control: {depth_control:.3f}")
 
         vert_thruster_command = vert_force_to_thrusters(depth_control)   
-        heading_thruster_command = yaw_force_to_thrusters(heading_control)
-        speed_thruster_command = speed_force_to_thrusters(speed_command)
+        heading_thruster_command = -1*yaw_force_to_thrusters(heading_control)
+        speed_thruster_command = np.array([0, 0, 0, 0, 1, 1, 1, 1])*5
+        # speed_thruster_command = np.zeros(8)
 
         thruster_command = vert_thruster_command+heading_thruster_command+speed_thruster_command
 
 
 
-        theta = pose[3:6]
-        pos = pose[0:3]
+        theta = st[3:6]
 
         thrust_forces_body = thrusters_to_body_forces(thruster_command)
         # print(thrust_forces_body)
@@ -185,17 +162,8 @@ with holoocean.make(scenario_cfg=scenario) as env:
 
         acceleration_global = forces_to_accelerations(net_force_global)
 
-        if D < 5:
-            goal_idx += 1
-            if goal_idx >= len(track_list):
-                print('Finished track!')
-                break
-            else:
-                print('Goal reached! Next Waypoint!')
-    
-
-        pos_x_data.append(pose[0])
-        pos_y_data.append(pose[1])
+        pos_x_data.append(st[0])
+        pos_y_data.append(st[1])
 
         position_line.set_xdata(pos_x_data)
         position_line.set_ydata(pos_y_data)
